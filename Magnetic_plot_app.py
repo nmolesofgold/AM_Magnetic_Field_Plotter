@@ -12,10 +12,15 @@ import zipfile
 #           STREAMLIT PAGE CONFIG
 # ==========================================
 st.set_page_config(
-    page_title="Magnetic Field Analyzer", 
-    page_icon="🧲", 
+    page_title="Magnetic Field Analyzer",
+    page_icon="🧲",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://www.linkedin.com/in/nmolesofgold/',
+        'Report a bug': "https://www.linkedin.com/in/nmolesofgold/",
+        'About': "### Magnetic Field Analyzer\n**Developed by Dr. Anmol Mahendra**.\n\nA versatile tool for visualising magnetic field scans. Compatible with Halbach arrays, solenoids, dipoles, and general 3D field mapping data."
+    }
 )
 
 # --- LIGHT MODE CONFIG ---
@@ -354,4 +359,22 @@ if uploaded_file:
 
 else:
     st.info("Awaiting CSV file upload...")
+
+# --- HIDDEN SEO METADATA ---
+st.markdown("""
+<div style="display:none;">
+    <h1>Magnetic Field Analysis Software for Python</h1>
+    <p>A comprehensive tool for plotting and analyzing 3D magnetic field data.</p>
+    <p>Perfect for researchers working with:</p>
+    <ul>
+        <li>Halbach Arrays (Permanent Magnets)</li>
+        <li>Solenoids and Electromagnets</li>
+        <li>Dipole and Quadrupole Magnets</li>
+        <li>Helmholtz Coils</li>
+    </ul>
+    <p>Features: Homogeneity calculation (PPM), 3D Scatter Plots, Field Topology, and Vector Field visualization.</p>
+    <p>Developed by Dr. Anmol Mahendra.</p>
+</div>
+""", unsafe_allow_html=True)
+
 
