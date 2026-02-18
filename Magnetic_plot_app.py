@@ -31,7 +31,7 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 st.title("🧲 Magnetic Field Analyzer")
-st.caption("Developed by Dr. Anmol Mahendra")
+st.caption("Developed by [Dr. Anmol Mahendra](https://www.linkedin.com/in/nmolesofgold/)")
 
 # ==========================================
 #           SESSION STATE MANAGEMENT
@@ -354,3 +354,4 @@ if uploaded_file:
 
 else:
     st.info("Awaiting CSV file upload...")
+
