@@ -55,6 +55,29 @@ if "zip_ready" not in st.session_state:
 # ==========================================
 with st.sidebar:
     st.header("1. Data Input")
+    
+    with st.expander("ℹ️ File Format Instructions"):
+        st.markdown("""
+        **Required Header Row:**
+        `X_mm,Y_mm,Z_mm,Field`
+        
+        **⚠️ Unit Note:**
+        The input file **must have the field in Tesla**. 
+        (e.g., `2.083e-01` for ~208 mT). 
+        
+        *The app automatically scales Tesla (T) to milliTesla (mT) for all plots.*
+        """)
+        
+        # Template based on your sample data
+        dummy_data = pd.DataFrame({
+            'X_mm': [125.7, 125.7, 125.69], 
+            'Y_mm': [-26.59, -26.58, -26.57], 
+            'Z_mm': [-4, -4, -4], 
+            'Field': [0.2083, 0.2083, 0.2083]
+        })
+        csv_template = dummy_data.to_csv(index=False).encode('utf-8')
+        st.download_button("📄 Download Tesla Template", csv_template, "magnetic_tesla_template.csv", "text/csv")
+
     uploaded_file = st.file_uploader("Upload CSV Scan", type=["csv"], on_change=reset_report)
     
     st.header("2. Analysis Settings")
@@ -66,17 +89,11 @@ with st.sidebar:
 
     st.divider()
     st.header("4. Publication Settings")
-    # Triggers reset_report when changed
     pub_format = st.selectbox("File Format", ["PNG", "PDF", "SVG"], on_change=reset_report)
-    
-    if pub_format == "PNG":
-        pub_dpi = st.select_slider("DPI (for PNG)", options=[300, 600, 1200], value=300, on_change=reset_report)
-    else:
-        pub_dpi = 300 # DPI doesn't matter much for vector formats but needed for savefig argument
+    pub_dpi = st.select_slider("DPI (for PNG)", options=[300, 600, 1200], value=300) if pub_format == "PNG" else 300
     
     file_ext = pub_format.lower()
     mime_type = "application/pdf" if file_ext == "pdf" else f"image/{file_ext}"
-    if file_ext == "svg": mime_type = "image/svg+xml"
 
 # ==========================================
 #           DATA PROCESSING
@@ -376,5 +393,6 @@ st.markdown("""
     <p>Developed by Dr. Anmol Mahendra.</p>
 </div>
 """, unsafe_allow_html=True)
+
 
 
