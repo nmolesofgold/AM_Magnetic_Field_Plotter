@@ -55,6 +55,7 @@ if "zip_ready" not in st.session_state:
 with st.sidebar:
     st.header("1. Data Input")
     
+    # Unit Selection
     c1, c2 = st.columns(2)
     with c1:
         dist_unit = st.selectbox("Distance Unit", ["mm", "cm", "m", "inches"], index=0, on_change=reset_report)
@@ -81,9 +82,13 @@ with st.sidebar:
     # MULTI-FILE UPLOAD
     uploaded_files = st.file_uploader("Upload CSV Scan(s)", type=["csv"], accept_multiple_files=True, on_change=reset_report)
     
-    st.header("2. Analysis Settings")
-    cyl_radius = st.number_input("Reference Cylinder Radius (mm)", value=7.0, step=0.5, on_change=reset_report)
-    cyl_length = st.number_input("Reference Cylinder Length (mm)", value=46.0, step=1.0, on_change=reset_report)
+    st.header("2. Analysis Volume (Homogeneity)")
+    vol_shape = st.selectbox("Target Volume Shape", ["Cylinder", "Sphere"], on_change=reset_report)
+    vol_radius = st.number_input("Radius (mm)", value=7.0, step=0.5, on_change=reset_report)
+    vol_length = 46.0  # Default hidden value to prevent errors
+    
+    if vol_shape == "Cylinder":
+        vol_length = st.number_input("Length (mm)", value=46.0, step=1.0, on_change=reset_report)
     
     st.header("3. Performance")
     max_3d_points = st.slider("Max 3D Points (Interactive)", 5000, 100000, 20000, 5000)
@@ -136,13 +141,34 @@ def load_and_process_data(file_bytes, filename, dist_unit, field_unit):
     
     return df, {'peak_b': peak_b, 'cx': cx, 'cy': cy, 'cz': cz}, {'z_rels': unique_zs-cz, 'vals': np.array(z_vals)}
 
-def get_cylinder_mesh(radius, length, z_center=0):
-    z = np.linspace(z_center - length/2, z_center + length/2, 50)
-    theta = np.linspace(0, 2*np.pi, 50)
-    theta_grid, z_grid = np.meshgrid(theta, z)
-    x_grid = radius * np.cos(theta_grid)
-    y_grid = radius * np.sin(theta_grid)
-    return x_grid, y_grid, z_grid
+def get_volume_mesh(shape, radius, length, z_center=0):
+    if shape == "Cylinder":
+        z = np.linspace(z_center - length/2, z_center + length/2, 50)
+        theta = np.linspace(0, 2*np.pi, 50)
+        theta_grid, z_grid = np.meshgrid(theta, z)
+        x_grid = radius * np.cos(theta_grid)
+        y_grid = radius * np.sin(theta_grid)
+        return x_grid, y_grid, z_grid
+    else: # Sphere
+        u, v = np.mgrid[0:2*np.pi:50j, 0:np.pi:50j]
+        x_grid = radius * np.cos(u) * np.sin(v)
+        y_grid = radius * np.sin(u) * np.sin(v)
+        z_grid = z_center + radius * np.cos(v)
+        return x_grid, y_grid, z_grid
+
+def calc_vol_homogeneity(df, shape, r, l, b0):
+    """Filters points inside the 3D volume and calculates Peak-to-Peak PPM."""
+    if shape == "Cylinder":
+        mask = (df['X_rel']**2 + df['Y_rel']**2 <= r**2) & (df['Z_rel'].abs() <= l/2)
+    else:
+        mask = (df['X_rel']**2 + df['Y_rel']**2 + df['Z_rel']**2 <= r**2)
+    
+    pts = df[mask]['B_mT']
+    if len(pts) == 0: return np.nan, np.nan, np.nan
+        
+    pk_pk = pts.max() - pts.min()
+    ppm = (pk_pk / b0) * 1e6
+    return ppm, pts.min(), pts.max()
 
 def apply_black_axes(fig):
     fig.update_xaxes(showline=True, linewidth=2, linecolor='black', mirror=True, showgrid=True, gridcolor='lightgrey', title_font=dict(color='black', size=14, family="Arial Black"), tickfont=dict(color='black', size=12))
@@ -153,6 +179,68 @@ def apply_black_axes(fig):
 # Distinct color palettes for multi-file rendering
 COLORSCALES = ['Viridis', 'Plasma', 'Inferno', 'Magma', 'Cividis', 'Blues', 'Reds', 'Greens']
 LINE_COLORS = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf']
+
+# ==========================================
+#        STATIC EXPORT FUNCTIONS 
+# ==========================================
+def set_mpl_style():
+    plt.rcParams.update({'font.size': 12, 'font.weight': 'bold', 'axes.labelweight': 'bold', 'axes.linewidth': 2, 'xtick.major.width': 2, 'ytick.major.width': 2, 'axes.edgecolor': 'black', 'figure.facecolor': 'white', 'text.color': 'black', 'xtick.color': 'black', 'ytick.color': 'black', 'axes.facecolor': 'white'})
+
+def get_mpl_img(fig, fmt, dpi):
+    buf = io.BytesIO()
+    fig.savefig(buf, format=fmt, dpi=dpi, bbox_inches='tight', facecolor='white', edgecolor='none')
+    plt.close(fig)
+    return buf.getvalue()
+
+def create_static_profile(z_rels, vals, B0):
+    f, ax = plt.subplots(figsize=(8, 5))
+    ax.plot(z_rels, vals, 'k-o', linewidth=2, label="Profile")
+    ax.plot(0, B0, 'r*', markersize=12, label="Max Field") 
+    ax.set_title("Z-Profile"); ax.set_xlabel("Z (mm)"); ax.set_ylabel("Field (mT)")
+    ax.grid(True, linestyle='--'); ax.legend()
+    return f
+
+def create_static_heatmap(gx, gy, gb, z_val):
+    f, ax = plt.subplots(figsize=(6, 5))
+    cp = ax.pcolormesh(gx, gy, gb, cmap='viridis')
+    f.colorbar(cp, label='mT')
+    ax.set_title(f"Field Distribution (Z={z_val:.1f}mm)")
+    return f
+
+def create_static_topology(gx, gy, gb, z_val):
+    fig = plt.figure(figsize=(8, 6))
+    ax = fig.add_subplot(111, projection='3d')
+    surf = ax.plot_surface(gx, gy, gb, cmap='viridis', edgecolor='none')
+    fig.colorbar(surf, label='mT', shrink=0.7, pad=0.1)
+    ax.set_title(f"3D Topology (Z={z_val:.1f}mm)")
+    ax.set_xlabel("X (mm)"); ax.set_ylabel("Y (mm)"); ax.set_zlabel("mT")
+    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 1.0)); ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 1.0)); ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 1.0))
+    return fig
+
+def create_static_homogeneity(x_l, y_l, z_rels, bx, by, z_vals, B0):
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+    axes[0].plot(x_l, (bx-B0)/B0*100, 'r-', linewidth=2)
+    axes[0].set_title("X-Axis"); axes[0].set_ylabel("Deviation (%)")
+    axes[1].plot(y_l, (by-B0)/B0*100, 'g-', linewidth=2)
+    axes[1].set_title("Y-Axis"); axes[1].set_xlabel("Position (mm)")
+    axes[2].plot(z_rels, (z_vals-B0)/B0*100, 'b-', linewidth=2)
+    axes[2].set_title("Z-Axis")
+    for ax in axes:
+        ax.grid(True, linestyle=':', alpha=0.6, color='gray')
+        for spine in ax.spines.values(): spine.set_linewidth(2)
+    plt.tight_layout()
+    return fig
+
+def create_static_3d_cloud(df, centers):
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+    p = ax.scatter(df['X_rel'], df['Y_rel'], df['Z_rel'], c=df['B_mT'], cmap='viridis', s=0.5, alpha=0.6)
+    fig.colorbar(p, label='Field (mT)', pad=0.1, shrink=0.7)
+    ax.scatter(0, 0, 0, color='red', s=50, marker='o', label='Center')
+    ax.set_xlabel("X (mm)"); ax.set_ylabel("Y (mm)"); ax.set_zlabel("Z (mm)")
+    ax.set_title("3D Magnetic Field Cloud")
+    ax.xaxis.set_pane_color((1.0, 1.0, 1.0, 1.0)); ax.yaxis.set_pane_color((1.0, 1.0, 1.0, 1.0)); ax.zaxis.set_pane_color((1.0, 1.0, 1.0, 1.0))
+    return fig
 
 # ==========================================
 #            MAIN APP LOGIC
@@ -174,10 +262,53 @@ if uploaded_files:
 
     # --- SIDEBAR: DOWNLOAD MANAGER ---
     if is_comp_mode:
-        st.sidebar.info("📦 Multi-file ZIP Export is disabled. View comparisons interactively in the tabs.")
+        st.sidebar.info("📦 Static Multi-file ZIP Export is disabled. View comparisons interactively in the tabs.")
     else:
-        # ZIP generation for single files remains exactly the same as your original script
-        pass 
+        if st.sidebar.button(f"🚀 Generate {pub_format} Report"):
+            with st.sidebar.status(f"Generating {pub_format} Plots...", expanded=True):
+                set_mpl_style()
+                zip_buf = io.BytesIO()
+                
+                single_data = list(datasets.values())[0]
+                df_single = single_data['df']
+                prof_s = single_data['prof']
+                meta_s = single_data['meta']
+                B0_s = single_data['B0']
+
+                z0_val = prof_s['z_rels'][np.argmin(np.abs(prof_s['z_rels']))]
+                s_df = df_single[df_single['Z_rel'] == z0_val]
+                gx, gy = np.mgrid[s_df['X_rel'].min():s_df['X_rel'].max():100j, s_df['Y_rel'].min():s_df['Y_rel'].max():100j]
+                gb = griddata((s_df['X_rel'], s_df['Y_rel']), s_df['B_mT'], (gx, gy), method='linear')
+                x_l = np.linspace(s_df['X_rel'].min(), s_df['X_rel'].max(), 100)
+                y_l = np.linspace(s_df['Y_rel'].min(), s_df['Y_rel'].max(), 100)
+                bx = griddata((s_df['X_rel'], s_df['Y_rel']), s_df['B_mT'], (x_l, np.zeros_like(x_l)), method='linear')
+                by = griddata((s_df['X_rel'], s_df['Y_rel']), s_df['B_mT'], (np.zeros_like(y_l), y_l), method='linear')
+
+                st.write("Processing Static Images...")
+                f1 = create_static_profile(prof_s['z_rels'], prof_s['vals'], B0_s)
+                f2 = create_static_heatmap(gx, gy, gb, z0_val)
+                f3 = create_static_topology(gx, gy, gb, z0_val)
+                f4 = create_static_homogeneity(x_l, y_l, prof_s['z_rels'], bx, by, prof_s['vals'], B0_s)
+                f5 = create_static_3d_cloud(df_single, meta_s)
+
+                with zipfile.ZipFile(zip_buf, "w") as zf:
+                    zf.writestr(f"1_profile.{file_ext}", get_mpl_img(f1, file_ext, pub_dpi))
+                    zf.writestr(f"2_heatmap.{file_ext}", get_mpl_img(f2, file_ext, pub_dpi))
+                    zf.writestr(f"3_topology_3d.{file_ext}", get_mpl_img(f3, file_ext, pub_dpi))
+                    zf.writestr(f"4_homogeneity.{file_ext}", get_mpl_img(f4, file_ext, pub_dpi))
+                    zf.writestr(f"5_cloud_3d.{file_ext}", get_mpl_img(f5, file_ext, pub_dpi))
+                
+                st.session_state.zip_data = zip_buf.getvalue()
+                st.session_state.zip_ready = True
+                st.write("Done!")
+
+        if st.session_state.zip_ready:
+            st.sidebar.download_button(
+                label=f"📦 Download ZIP ({file_ext.upper()})", 
+                data=st.session_state.zip_data, 
+                file_name=f"Magnetic_Analysis_{file_ext}.zip",
+                mime="application/zip"
+            )
 
     # --- TABS ---
     t1, t2, t3, t4 = st.tabs(["Overview", "3D Cloud", "Slice Viewer", "Homogeneity"])
@@ -210,8 +341,8 @@ if uploaded_files:
 
     with t2:
         fig_3d = go.Figure()
-        cx_mesh, cy_mesh, cz_mesh = get_cylinder_mesh(cyl_radius, cyl_length, 0)
-        fig_3d.add_trace(go.Surface(x=cx_mesh, y=cy_mesh, z=cz_mesh, opacity=0.2, colorscale='Greys', showscale=False, name='Cylinder', showlegend=False))
+        cx_mesh, cy_mesh, cz_mesh = get_volume_mesh(vol_shape, vol_radius, vol_length, 0)
+        fig_3d.add_trace(go.Surface(x=cx_mesh, y=cy_mesh, z=cz_mesh, opacity=0.2, colorscale='Greys', showscale=False, name=vol_shape, showlegend=False))
         fig_3d.add_trace(go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', marker=dict(size=5, color='red'), showlegend=False))
         fig_3d.add_trace(go.Scatter3d(x=[0, 15], y=[0, 0], z=[0, 0], mode='lines', line=dict(color='red', width=6), showlegend=False))
         
@@ -219,7 +350,6 @@ if uploaded_files:
             df = data['df']
             c_scale = COLORSCALES[idx % len(COLORSCALES)]
             
-            # Downsample for performance
             if len(df) > max_3d_points:
                 step = len(df) // max_3d_points
                 df_3d = df.iloc[::step]
@@ -260,7 +390,7 @@ if uploaded_files:
             gb_s = griddata((curr_slice_2d['X_rel'], curr_slice_2d['Y_rel']), curr_slice_2d['B_mT'], (gx_s, gy_s), method='linear')
             center_val = griddata((curr_slice_2d['X_rel'], curr_slice_2d['Y_rel']), curr_slice_2d['B_mT'], (0, 0), method='nearest')
 
-            # T FIX APPLIED HERE:
+            # Bug fix applied here: z=gb_s.T
             fig_h = go.Figure(go.Heatmap(x=gx_s[:,0], y=gy_s[0,:], z=gb_s.T, colorscale='Viridis'))
             fig_h.add_trace(go.Scatter(x=[0], y=[0], mode='markers+text', marker=dict(color='black', size=15, symbol='cross-thin', line=dict(color='white', width=2)), text=[f"{float(center_val):.2f} mT"], textposition="top center", textfont=dict(color='black', size=14, family="Arial Black"), name="Center"))
             fig_h.update_layout(title=f"2D Heatmap (Z={closest_z_2d:.1f})", xaxis_title="X", yaxis_title="Y", width=500, height=500, xaxis=dict(scaleanchor="y", scaleratio=1), yaxis=dict(constrain='domain'))
@@ -282,7 +412,6 @@ if uploaded_files:
                 gxs, gys = np.mgrid[curr_slice['X_rel'].min():curr_slice['X_rel'].max():60j, curr_slice['Y_rel'].min():curr_slice['Y_rel'].max():60j]
                 gbs = griddata((curr_slice['X_rel'], curr_slice['Y_rel']), curr_slice['B_mT'], (gxs, gys), method='linear')
                 
-                # Plot multiple surfaces on the same axis
                 fig_s.add_trace(go.Surface(
                     z=gbs, x=gxs, y=gys, 
                     colorscale=c_scale, opacity=0.8, 
@@ -320,5 +449,39 @@ if uploaded_files:
         fig_hom.update_yaxes(title_text="Deviation %", color="black", row=1, col=1)
         st.plotly_chart(fig_hom, width='stretch')
 
+        # --- VOLUME HOMOGENEITY MATH ---
+        st.divider()
+        st.subheader(f"Volume Homogeneity Analysis ({vol_shape})")
+        st.write(f"**Target Volume boundaries:** Radius = {vol_radius} mm" + (f", Length = {vol_length} mm" if vol_shape=="Cylinder" else ""))
+        
+        hom_data = []
+        for name, data in datasets.items():
+            ppm, min_b, max_b = calc_vol_homogeneity(data['df'], vol_shape, vol_radius, vol_length, data['B0'])
+            hom_data.append({
+                "Dataset": name,
+                "Pk-Pk (PPM)": ppm,
+                "Min Field (mT)": min_b,
+                "Max Field (mT)": max_b
+            })
+            
+        st.dataframe(pd.DataFrame(hom_data).style.format({"Pk-Pk (PPM)": "{:.1f}", "Min Field (mT)": "{:.4f}", "Max Field (mT)": "{:.4f}"}), hide_index=True, use_container_width=True)
+
 else:
     st.info("Awaiting CSV file upload...")
+
+# --- HIDDEN SEO METADATA ---
+st.markdown("""
+<div style="display:none;">
+    <h1>Magnetic Field Analysis Software for Python</h1>
+    <p>A comprehensive tool for plotting and analyzing 3D magnetic field data.</p>
+    <p>Perfect for researchers working with:</p>
+    <ul>
+        <li>Halbach Arrays (Permanent Magnets)</li>
+        <li>Solenoids and Electromagnets</li>
+        <li>Dipole and Quadrupole Magnets</li>
+        <li>Helmholtz Coils</li>
+    </ul>
+    <p>Features: Homogeneity calculation (PPM), 3D Scatter Plots, Field Topology, and Vector Field visualization.</p>
+    <p>Developed by Dr. Anmol Mahendra.</p>
+</div>
+""", unsafe_allow_html=True)
