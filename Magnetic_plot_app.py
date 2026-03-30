@@ -342,7 +342,7 @@ if uploaded_file:
 
         c1, c2 = st.columns(2)
         with c1:
-            fig_h = go.Figure(go.Heatmap(x=gx_s[:,0], y=gy_s[0,:], z=gb_s, colorscale='Viridis'))
+            fig_h = go.Figure(go.Heatmap(x=gx_s[:,0], y=gy_s[0,:], z=gb_s.T, colorscale='Viridis'))
             fig_h.add_trace(go.Scatter(x=[0], y=[0], mode='markers+text', marker=dict(color='black', size=15, symbol='cross-thin', line=dict(color='white', width=2)), text=[f"{float(center_val):.2f} mT"], textposition="top center", textfont=dict(color='black', size=14, family="Arial Black"), name="Center"))
             fig_h.update_layout(title=f"2D Heatmap (Z={sel_z:.1f})", xaxis_title="X", yaxis_title="Y", width=500, height=500, xaxis=dict(scaleanchor="y", scaleratio=1), yaxis=dict(constrain='domain'))
             fig_h = apply_black_axes(fig_h)
